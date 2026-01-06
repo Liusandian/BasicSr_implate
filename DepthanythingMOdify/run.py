@@ -20,6 +20,8 @@ if __name__ == '__main__':
     
     parser.add_argument('--pred-only', dest='pred_only', action='store_true', help='only display the prediction')
     parser.add_argument('--grayscale', dest='grayscale', action='store_true', help='do not apply colorful palette')
+    parser.add_argument('--save-raw', dest='save_raw', action='store_true', help='save raw depth map as .raw file for YUV player')
+    parser.add_argument('--save-float', dest='save_float', action='store_true', help='save float depth values as .bin file')
     
     args = parser.parse_args()
     
@@ -56,18 +58,37 @@ if __name__ == '__main__':
         
         depth = depth_anything.infer_image(raw_image, args.input_size)
         
-        depth = (depth - depth.min()) / (depth.max() - depth.min()) * 255.0
-        depth = depth.astype(np.uint8)
+        # Get base filename for saving
+        base_filename = os.path.splitext(os.path.basename(filename))[0]
         
+        # Save raw float depth values if requested
+        if args.save_float:
+            float_path = os.path.join(args.outdir, base_filename + '_float.bin')
+            depth.astype(np.float32).tofile(float_path)
+            print(f'  Saved float depth to: {float_path}')
+            print(f'  Shape: {depth.shape}, Min: {depth.min():.4f}, Max: {depth.max():.4f}')
+        
+        # Normalize depth to 0-255
+        depth_normalized = (depth - depth.min()) / (depth.max() - depth.min()) * 255.0
+        depth_uint8 = depth_normalized.astype(np.uint8)
+        
+        # Save raw 8-bit depth map for YUV player if requested
+        if args.save_raw:
+            raw_path = os.path.join(args.outdir, base_filename + '.raw')
+            depth_uint8.tofile(raw_path)
+            print(f'  Saved raw depth to: {raw_path}')
+            print(f'  YUVPlayer config: {depth.shape[1]}x{depth.shape[0]}, Y800 (8-bit grayscale)')
+        
+        # Prepare visualization
         if args.grayscale:
-            depth = np.repeat(depth[..., np.newaxis], 3, axis=-1)
+            depth_vis = np.repeat(depth_uint8[..., np.newaxis], 3, axis=-1)
         else:
-            depth = (cmap(depth)[:, :, :3] * 255)[:, :, ::-1].astype(np.uint8)
+            depth_vis = (cmap(depth_uint8)[:, :, :3] * 255)[:, :, ::-1].astype(np.uint8)
         
         if args.pred_only:
-            cv2.imwrite(os.path.join(args.outdir, os.path.splitext(os.path.basename(filename))[0] + '.png'), depth)
+            cv2.imwrite(os.path.join(args.outdir, base_filename + '.png'), depth_vis)
         else:
             split_region = np.ones((raw_image.shape[0], 50, 3), dtype=np.uint8) * 255
-            combined_result = cv2.hconcat([raw_image, split_region, depth])
+            combined_result = cv2.hconcat([raw_image, split_region, depth_vis])
             
-            cv2.imwrite(os.path.join(args.outdir, os.path.splitext(os.path.basename(filename))[0] + '.png'), combined_result)
+            cv2.imwrite(os.path.join(args.outdir, base_filename + '.png'), combined_result)
